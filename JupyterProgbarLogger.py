@@ -1,3 +1,4 @@
+import JupyterProgbar
 from tensorflow.keras.callbacks import Callback
 from tqdm import tqdm_notebook as tqdm
 from collections import OrderedDict
@@ -31,7 +32,7 @@ class JupyterProgbarLogger(Callback):
             self.stateful_metrics = set(stateful_metrics)
         else:
             self.stateful_metrics = set()
-            
+
     def on_train_begin(self, logs=None):
         self.verbose = True
         self.epochs = self.params['epochs']
@@ -71,8 +72,7 @@ class JupyterProgbarLogger(Callback):
         # will be handled by on_epoch_end.
         if self.verbose and self.seen < self.target:
             self.progbar.update(self.seen)
-            print(self.update_vals(self.log_values,self.seen),end='\r')
-            #self.progbar.set_description(self.update_vals(self.log_values,self.seen))
+            self.progbar.set_description(self.update_vals(self.log_values,self.seen))
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -80,8 +80,8 @@ class JupyterProgbarLogger(Callback):
             if k in logs:
                 self.log_values.append((k, logs[k]))
         if self.verbose:
-                self.progbar.update(self.seen)
-                print(self.update_vals(self.log_values,self.seen))
+            self.progbar.update(self.seen)
+            self.progbar.set_description(self.update_vals(self.log_values,self.seen))
     def update_vals(self,values,step_amt):
         current=self._seen_so_far+step_amt
         for k, v in values:
@@ -98,21 +98,16 @@ class JupyterProgbarLogger(Callback):
                 # numeric formatting.
                 self._values[k] = [v, 1]
         info=''
-        first = True
         for k in self._values:
-            if not first:
                 info += ' - %s:' % k
-            else:
-                info += 'Metrics: %s:' % k
-                first = False
-            if isinstance(self._values[k], list):
-                avg = np.mean(
-                    self._values[k][0] / max(1, self._values[k][1]))
-                if abs(avg) > 1e-3:
-                    info += ' %.4f' % avg
+                if isinstance(self._values[k], list):
+                    avg = np.mean(
+                        self._values[k][0] / max(1, self._values[k][1]))
+                    if abs(avg) > 1e-3:
+                        info += ' %.4f' % avg
+                    else:
+                        info += ' %.4e' % avg
                 else:
-                    info += ' %.4e' % avg
-            else:
-                info += ' %s' % self._values[k]
+                    info += ' %s' % self._values[k]
         self._seen_so_far =current
         return info
