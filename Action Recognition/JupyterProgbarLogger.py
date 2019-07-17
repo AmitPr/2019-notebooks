@@ -82,6 +82,7 @@ class JupyterProgbarLogger(Callback):
         if self.verbose:
                 self.progbar.update(self.seen)
                 print(self.update_vals(self.log_values,self.seen))
+        self.progbar.close()
     def update_vals(self,values,step_amt):
         current=self._seen_so_far+step_amt
         for k, v in values:
