@@ -1,56 +1,76 @@
 import numpy as np
 import h5py
 from tensorflow import keras
+import random
 
 class DataGenerator(keras.utils.Sequence):
     #Initialize
-    def __init__(self, file_path, shape=(80,80,1), frames_per_sample=32, data_amount=300000, batch_size=32):
+    def __init__(self, file_path, shape=(80,80), frames_per_sample=32, data_amount=300000, batch_size=32,offset=0):
         self.file_path=file_path
+        #Assert that data_amount is <= available data
         with h5py.File(file_path,'r') as f:
-            self.data_amount = len(f["/frames"])
-        
+            if data_amount > len(f["/frames/raw"]):
+                self.data_amount = len(f["/frames/raw"])
+            else:
+                self.data_amount=data_amount
+        #Instance Variables
         self.shape=shape
         self.batch_size = batch_size
         self.frames_per_sample = frames_per_sample
+        self.offset=offset
 
     def __len__(self):
         #How many batches in 1 epoch
-        return int(np.floor(self.data_amount/self.frames_per_sample/self.batch_size))
+        return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size/10))
 
     def __getitem__(self, index):
         #Create a batch
-        #Get a random start pos for each set of frames in the batch
-        indices = np.random.randint(self.data_amount,size=self.batch_size)
-        
-        batch_data = np.zeros((self.batch_size,self.frames_per_sample,)+self.shape)
-        batch_labels = np.zeros(self.batch_size)
-        
+        with h5py.File(self.file_path,'r') as f:
+            if not self.frames_per_sample == 1:
+                #Generate batch_size long clips of frames to input.
+                return self.generate_chunk(index)
+            else:
+                #For when you only want 1 frame per sample in the batch (e.g. Conv2D)
+                #Pick a random set of batch_size frames for the whole batch
+                batch_data = np.zeros((self.batch_size,)+self.shape)
+                batch_labels = np.zeros(self.batch_size)
+                i=0
+                while i<self.batch_size:
+                    index = random.randint(self.offset,self.data_amount+self.offset-2)
+                    if f["/labels"][index]>=0:
+                        batch_data[i]=f["/frames/raw"][index]
+                        batch_labels[i]=f["/labels"][index]
+                        i+=1
+                return batch_data[...,None],batch_labels
+
+
+    def generate_chunk(self,batch_ind):
+        chunk_data=np.zeros((self.batch_size,self.frames_per_sample,)+self.shape)
+        chunk_labels=np.zeros(self.batch_size)
+        cur_amount = 0
         with h5py.File(self.file_path,'r') as f:
             for i in range(0,self.batch_size):
-                #Go up and down from the start position to complete a set of frames for one sample
-                label = f["/labels"][indices[i]]
-                remaining = self.frames_per_sample
-                low = high = indices[i]
-                while remaining > 0:
-                    if high+1==self.data_amount:
-                        low-=1
-                        remaining-=1
-                    elif f["/labels"][high+1] == label:
-                        high+=1
-                        remaining-=1
+                #Starting index for each sample
+                index = self.frames_per_sample*random.randint(0,self.data_amount/self.frames_per_sample)
+                #alternative index: random.randint(self.offset,self.data_amount+self.offset-(self.frames_per_sample*2))
+                #Loop forward to add to the frame sequence
+                while cur_amount < self.frames_per_sample:
+                    label = f["/labels"][index]
+                    if label >= 0:
+                        chunk_data[i][cur_amount]=f["/frames/raw"][index]
+                        index+=1
+                        cur_amount+=1
                     else:
-                        low-=1
-                        remaining-=1
-                #add the frames to the current batch data
-                batch_data[i]=f["/frames"][low:high]
-                batch_labels[i]=label
-            return batch_data,batch_labels
-
+                        index+=1
+                #Add end of sequence frame's label to label list
+                chunk_labels[i]=f["/labels"][index]
+            return chunk_data[...,None],chunk_labels
+    
     def on_epoch_end(self):
         pass
 
     
-#Reprocess a file for the data generator. 
+#Reprocess a file for the data generator. -- used for old Data Generator
 #This is done in advance so that python doesn't run out of memory when using multiprocessing.
 def process_file(in_file_path, out_file_path,frames_per_sample=32, data_amount=300000,frame_shape=(80,80,1)):
     with h5py.File(in_file_path,'r') as f:
@@ -106,5 +126,6 @@ def process_file(in_file_path, out_file_path,frames_per_sample=32, data_amount=3
                     end = indices_to_copy[j+1]
                     wf["/frames"][cur_i:cur_i+(end-start)]=(f["/frames/raw"][start:end])[...,None]
                     cur_i+=end-start
+                    print("Processing File: [",(j/len(indices_to_copy)),"%]",end='\r')
                 #del data
                 del labels
