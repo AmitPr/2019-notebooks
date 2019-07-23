@@ -24,6 +24,7 @@ class DataGenerator(keras.utils.Sequence):
         return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size/10))
 
     def __getitem__(self, index):
+        index*=self.batch_size*self.frames_per_sample
         #Create a batch
         with h5py.File(self.file_path,'r') as f:
             if not self.frames_per_sample == 1:
@@ -36,7 +37,6 @@ class DataGenerator(keras.utils.Sequence):
                 batch_labels = np.zeros(self.batch_size)
                 i=0
                 while i<self.batch_size:
-                    index = random.randint(self.offset,self.data_amount+self.offset-2)
                     if f["/labels"][index]>=0:
                         batch_data[i]=f["/frames/raw"][index]
                         batch_labels[i]=f["/labels"][index]
@@ -47,23 +47,25 @@ class DataGenerator(keras.utils.Sequence):
     def generate_chunk(self,batch_ind):
         chunk_data=np.zeros((self.batch_size,self.frames_per_sample,)+self.shape)
         chunk_labels=np.zeros(self.batch_size)
-        cur_amount = 0
         with h5py.File(self.file_path,'r') as f:
-            for i in range(0,self.batch_size):
-                #Starting index for each sample
-                index = self.frames_per_sample*random.randint(0,self.data_amount/self.frames_per_sample)
-                #alternative index: random.randint(self.offset,self.data_amount+self.offset-(self.frames_per_sample*2))
+            i=0
+            #Starting index for batch samples
+            index = batch_ind
+            while i < self.batch_size:
                 #Loop forward to add to the frame sequence
+                cur_amount = 0
                 while cur_amount < self.frames_per_sample:
                     label = f["/labels"][index]
                     if label >= 0:
                         chunk_data[i][cur_amount]=f["/frames/raw"][index]
+                        chunk_labels[i]=f["/labels"][index]
                         index+=1
                         cur_amount+=1
                     else:
                         index+=1
-                #Add end of sequence frame's label to label list
-                chunk_labels[i]=f["/labels"][index]
+                i+=1
+            #chunk_data = (chunk_data+np.random.normal(0,1,(self.batch_size,self.frames_per_sample,80,80)))
+            #chunk_data[chunk_data<0]=0
             return chunk_data[...,None],chunk_labels
     
     def on_epoch_end(self):
@@ -76,18 +78,12 @@ def process_file(in_file_path, out_file_path,frames_per_sample=32, data_amount=3
     with h5py.File(in_file_path,'r') as f:
             #Load
             labels = (f['/labels'][:data_amount])
-            #data = f['/frames/raw'][:data_amount]
-            #Change dimensions for networks
-            #data = (data[(labels>=0)])[...,None]
-            #labels = labels[(labels>=0)]
             data_amount=len(labels)
             combine_frames=(not frames_per_sample==1)
             if combine_frames:
                 indices_to_copy=np.zeros(int(2*data_amount/frames_per_sample)+1,dtype=int)
                 ind_i = 0
                 #Array to copy blocks of data into
-                #temp_data = np.zeros(data.shape)
-                #current index in temp_data
                 temp_i = 0
                 i = 0
                 #label of continous set of matching data
@@ -105,17 +101,14 @@ def process_file(in_file_path, out_file_path,frames_per_sample=32, data_amount=3
                         cur_label=labels[i]
                     #Add block of continous data to new dataset
                     if end-start >= frames_per_sample and labels[start] >= 0:
-                        #temp_data[temp_i:temp_i+end-start]=data[start:end]
                         indices_to_copy[ind_i]=start
                         indices_to_copy[ind_i+1]=end
                         ind_i+=2
                         labels[temp_i:temp_i+end-start]=labels[start:end]
                         temp_i+=end-start
                 #trim to new size
-                #temp_data=temp_data[:temp_i]
                 labels=labels[:temp_i]
                 indices_to_copy=indices_to_copy[:ind_i]
-                #data=temp_data
                     
             with h5py.File(out_file_path,'w') as wf:
                 wf.create_dataset("/frames",shape=((len(labels),)+frame_shape),dtype='float32')
