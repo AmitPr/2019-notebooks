@@ -19,6 +19,11 @@ class DataGenerator(keras.utils.Sequence):
         self.frames_per_sample = frames_per_sample
         self.offset=offset
         self.skipped_frames=0
+        self.buffered_frames = np.zeros((self.batch_size*self.frames_per_sample*50,)+self.shape)
+        self.buffered_labels = np.zeros(self.batch_size*self.frames_per_sample*50)
+        self.buffer_index = 0
+        self.buffer_loc=0
+        self.refill_buffer()
 
     def __len__(self):
         #How many batches in 1 epoch
@@ -53,24 +58,42 @@ class DataGenerator(keras.utils.Sequence):
         with h5py.File(self.file_path,'r') as f:
             i=0
             #Starting index for batch samples
-            index = batch_ind
+            #index = batch_ind
             while i < self.batch_size:
                 #Loop forward to add to the frame sequence
                 cur_amount = 0
                 while cur_amount < self.frames_per_sample:
-                    label = f["/labels"][index]
+                    if self.buffer_index>=len(self.buffered_frames):
+                        self.buffer_loc+=1
+                        self.refill_buffer()
+                    label = self.buffered_labels[self.buffer_index]
                     if label >= 0:
-                        chunk_data[i][cur_amount]=f["/frames/raw"][index]
-                        chunk_labels[i]=f["/labels"][index]
-                        index+=1
+                        chunk_data[i][cur_amount]=self.buffered_frames[self.buffer_index]
+                        chunk_labels[i]=label
+                        self.buffer_index+=1
                         cur_amount+=1
                     else:
-                        index+=1
+                        self.buffer_index+=1
                 i+=1
             #chunk_data = (chunk_data+np.random.normal(0,1,(self.batch_size,self.frames_per_sample,80,80)))
             #chunk_data[chunk_data<0]=0
             return chunk_data[...,None],chunk_labels
-    
+    def refill_buffer(self):
+        load_len = len(self.buffered_frames)
+        start = self.buffer_loc*load_len
+        end = min((self.buffer_loc+1)*load_len,self.data_amount)
+        with h5py.File(self.file_path,'r') as f:
+            self.buffered_frames=f["/frames/raw"][start:end]
+            self.buffered_labels=f["/labels"][start:end]
+            if end >= self.data_amount:
+                self.buffered_frames=buffered_frames[0:i-(i%(self.batch_size*self.frames_per_sample))]
+                self.buffered_labels=buffered_labels[0:i-(i%(self.batch_size*self.frames_per_sample))]
+            self.buffer_index=0
+        
     def on_epoch_end(self):
         self.skipped_frames=0
+        self.buffer_index=0
+        self.buffer_loc=0
+        self.buffered_frames = np.zeros((self.batch_size*self.frames_per_sample*50,)+self.shape)
+        self.buffered_labels = np.zeros(self.batch_size*self.frames_per_sample*50)
         pass
