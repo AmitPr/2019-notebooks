@@ -11,6 +11,7 @@ class DataGenerator(keras.utils.Sequence):
         with h5py.File(file_path,'r') as f:
             if data_amount > len(f["/frames/raw"]):
                 self.data_amount = len(f["/frames/raw"])
+                print("More data than available")
             else:
                 self.data_amount=data_amount
         #Instance Variables
@@ -19,18 +20,15 @@ class DataGenerator(keras.utils.Sequence):
         self.frames_per_sample = frames_per_sample
         self.offset=offset
         self.skipped_frames=0
-        self.buffered_frames = np.zeros((self.batch_size*self.frames_per_sample*50,)+self.shape)
-        self.buffered_labels = np.zeros(self.batch_size*self.frames_per_sample*50)
-        self.buffer_index = 0
-        self.buffer_loc=0
-        self.refill_buffer()
 
     def __len__(self):
         #How many batches in 1 epoch
-        return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size))
+        with h5py.File(self.file_path,'r') as f:
+            return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size/2)) -(np.unique(f["/labels"][0:self.data_amount],return_counts=True)[1][0])
 
     def __getitem__(self, index):
-        index*=self.batch_size*self.frames_per_sample+self.skipped_frames
+        index*=self.batch_size*self.frames_per_sample
+        index+=self.skipped_frames
         #Create a batch
         with h5py.File(self.file_path,'r') as f:
             if not self.frames_per_sample == 1:
@@ -58,42 +56,35 @@ class DataGenerator(keras.utils.Sequence):
         with h5py.File(self.file_path,'r') as f:
             i=0
             #Starting index for batch samples
-            #index = batch_ind
+            index = batch_ind
+            #Preload frames for the batch to reduce disk time
+            preload = f["/frames/raw"][index+self.skipped_frames:index+(self.frames_per_sample*self.batch_size)+self.skipped_frames]
             while i < self.batch_size:
                 #Loop forward to add to the frame sequence
                 cur_amount = 0
                 while cur_amount < self.frames_per_sample:
-                    if self.buffer_index>=len(self.buffered_frames):
-                        self.buffer_loc+=1
-                        self.refill_buffer()
-                    label = self.buffered_labels[self.buffer_index]
+                    label = f["/labels"][index]
                     if label >= 0:
-                        chunk_data[i][cur_amount]=self.buffered_frames[self.buffer_index]
+                        #Get index in preload array
+                        buffer_index = (i*self.frames_per_sample)+cur_amount+self.skipped_frames
+                        #If we have skipped frames this batch then the preload will run out and we will have to read from disk
+                        #Only reads the same amount as the number of skipped frames.
+                        if buffer_index >= len(preload):
+                            chunk_data[i][cur_amount]=f["/frames/raw"][index]
+                        #Otherwise just take from the preload array.
+                        else:
+                            chunk_data[i][cur_amount]=preload[buffer_index]
                         chunk_labels[i]=label
-                        self.buffer_index+=1
+                        index+=1
                         cur_amount+=1
                     else:
-                        self.buffer_index+=1
+                        self.skipped_frames+=1
+                        index+=1
                 i+=1
             #chunk_data = (chunk_data+np.random.normal(0,1,(self.batch_size,self.frames_per_sample,80,80)))
             #chunk_data[chunk_data<0]=0
             return chunk_data[...,None],chunk_labels
-    def refill_buffer(self):
-        load_len = len(self.buffered_frames)
-        start = self.buffer_loc*load_len
-        end = min((self.buffer_loc+1)*load_len,self.data_amount)
-        with h5py.File(self.file_path,'r') as f:
-            self.buffered_frames=f["/frames/raw"][start:end]
-            self.buffered_labels=f["/labels"][start:end]
-            if end >= self.data_amount:
-                self.buffered_frames=buffered_frames[0:i-(i%(self.batch_size*self.frames_per_sample))]
-                self.buffered_labels=buffered_labels[0:i-(i%(self.batch_size*self.frames_per_sample))]
-            self.buffer_index=0
-        
+    
     def on_epoch_end(self):
         self.skipped_frames=0
-        self.buffer_index=0
-        self.buffer_loc=0
-        self.buffered_frames = np.zeros((self.batch_size*self.frames_per_sample*50,)+self.shape)
-        self.buffered_labels = np.zeros(self.batch_size*self.frames_per_sample*50)
         pass
