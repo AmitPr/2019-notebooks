@@ -46,9 +46,7 @@ class JupyterProgbarLogger(Callback):
             else:
                 target = self.params['samples']
             self.target = target
-            self.progbar = tqdm(total=self.target)#JupyterProgbar.JupyterProgbar(target=self.target,
-                            #       verbose=self.verbose,
-                             #      stateful_metrics=self.stateful_metrics)
+            self.progbar = tqdm(total=self.target)
         self.seen = 0
 
     def on_batch_begin(self, batch, logs=None):
@@ -72,7 +70,6 @@ class JupyterProgbarLogger(Callback):
         if self.verbose and self.seen < self.target:
             self.progbar.update(self.seen)
             print(self.update_vals(self.log_values,self.seen),end='\r')
-            #self.progbar.set_description(self.update_vals(self.log_values,self.seen))
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -116,4 +113,5 @@ class JupyterProgbarLogger(Callback):
             else:
                 info += ' %s' % self._values[k]
         self._seen_so_far =current
+        info += '           '
         return info

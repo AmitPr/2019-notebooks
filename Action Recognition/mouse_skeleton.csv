@@ -1,0 +1,5 @@
+name,parent,swap
+neck,head,
+abdomen,neck,
+forelegRight,,forelegLeft
+hindlegRight,,hindlegLeft
