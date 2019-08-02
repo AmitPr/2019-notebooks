@@ -1,7 +1,14 @@
 from tensorflow.keras.callbacks import Callback
-from tqdm import tqdm_notebook as tqdm
 from collections import OrderedDict
 import numpy as np
+import os
+import psutil
+import platform
+import time
+from distutils import spawn
+from subprocess import Popen, PIPE
+
+
 class JupyterProgbarLogger(Callback):
     """Callback that prints metrics to stdout. -- Fixed for Jupyter Notebooks
     # Arguments
@@ -17,10 +24,23 @@ class JupyterProgbarLogger(Callback):
     """
 
     def __init__(self, count_mode='samples',
-                 stateful_metrics=None):
+                 stateful_metrics=None,
+                 notebook=True):
         super(JupyterProgbarLogger,self).__init__()
+        if notebook:
+            from tqdm import tqdm_notebook as tqdm
+        else:
+            from tqdm import tqdm
+        self.tqdm = tqdm
         self._values = OrderedDict()
         self._seen_so_far = 0
+        self._epoch = 0
+        self.cpu_usage = []
+        self.gpu_usage = []
+        self.nvidia_smi= self._find_nvidia_smi()
+        self.has_gpu = True
+        self.subproc = None
+        self.last_time = time.time()
         if count_mode == 'samples':
             self.use_steps = False
         elif count_mode == 'steps':
@@ -38,16 +58,19 @@ class JupyterProgbarLogger(Callback):
 
     def on_epoch_begin(self, epoch, logs=None):
         self._values = OrderedDict()
+        self._epoch = epoch
         self._seen_so_far = 0
         if self.verbose:
-            print('Epoch %d/%d' % (epoch + 1, self.epochs))
+            #print()
             if self.use_steps:
                 target = self.params['steps']
             else:
                 target = self.params['samples']
             self.target = target
-            self.progbar = tqdm(total=self.target)
+            self.progbar = self.tqdm(total=self.target,desc = self._get_desc_str())
         self.seen = 0
+        self.gpu_usage = []
+        self.cpu_usage = []
 
     def on_batch_begin(self, batch, logs=None):
         if self.seen < self.target:
@@ -68,8 +91,11 @@ class JupyterProgbarLogger(Callback):
         # Skip progbar update for the last batch;
         # will be handled by on_epoch_end.
         if self.verbose and self.seen < self.target:
+            self.progbar.set_postfix(self.log_values)
+            if time.time()-self.last_time>=1:
+                self.progbar.set_description(self._get_desc_str())
+                self.last_time=time.time()
             self.progbar.update(self.seen)
-            print(self.update_vals(self.log_values,self.seen),end='\r')
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -77,9 +103,11 @@ class JupyterProgbarLogger(Callback):
             if k in logs:
                 self.log_values.append((k, logs[k]))
         if self.verbose:
-                self.progbar.update(self.seen)
-                print(self.update_vals(self.log_values,self.seen))
+            self.progbar.update(self.seen)
+            self.progbar.set_description(self._get_desc_str())
+            self.progbar.set_postfix(self.log_values)
         self.progbar.close()
+        
     def update_vals(self,values,step_amt):
         current=self._seen_so_far+step_amt
         for k, v in values:
@@ -115,3 +143,49 @@ class JupyterProgbarLogger(Callback):
         self._seen_so_far =current
         info += '           '
         return info
+    
+    def _get_desc_str(self):
+        """Adapted from Keras-Team/keras-tuner on Github"""
+        description = 'Epoch %d/%d' % (self._epoch + 1, self.epochs)
+        if self.has_gpu:
+            self._get_gpu_usage()
+            if len(self.gpu_usage):
+                description += '[GPU:%3s%%]' % int(np.average(self.gpu_usage))
+        self.cpu_usage.append(int(psutil.cpu_percent(interval=None)))
+        description += '[CPU:%3s%%]' % int(np.average(self.cpu_usage))
+        return description
+            
+    def _find_nvidia_smi(self):
+        """Find nvidia-smi program used to query the gpu"""
+        if platform.system() == "Windows":
+            # If the platform is Windows and nvidia-smi
+            # could not be found from the environment path,
+            # try to find it from system drive with default installation path
+            nvidia_smi = spawn.find_executable('nvidia-smi')
+            if nvidia_smi is None:
+                nvidia_smi = "%s\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe" % os.environ['systemdrive']
+        else:
+            nvidia_smi = "nvidia-smi"
+        return nvidia_smi
+    
+    def _get_gpu_usage(self):
+        """gpu usage"""
+        if not self.nvidia_smi:
+            return []
+        if self.subproc is None:
+            self.subproc = Popen([self.nvidia_smi, "--query-gpu=utilization.gpu",
+                      "--format=csv,noheader,nounits"], stdout=PIPE)
+            return []
+        try:
+            if self.subproc.poll() is None:
+                return []
+            stdout = self.subproc.stdout
+        except:
+            return []
+        info = stdout.read().decode('UTF-8')
+        #print('Info:', info, 'Truth: ', "Failed" in info)
+        if not "Failed" in info:
+            self.subproc = None
+            self.gpu_usage.append(int(np.average(np.array(info.split('\n')[:-1]).astype(np.uint8))))
+        else:
+            self.has_gpu=False

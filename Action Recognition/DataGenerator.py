@@ -30,6 +30,7 @@ class DataGenerator(keras.utils.Sequence):
         self.offset=offset
         self.skipped_frames=0
         self.use_crf = use_crf
+        #Sliding Window setup
         if sliding_window == 0:
             self.window=False
         else:
@@ -44,7 +45,7 @@ class DataGenerator(keras.utils.Sequence):
             if uniques[0][0]<0:
                 negatives+=uniques[1][0]
             if self.window:
-                return int(np.floor(self.data_amount/self.slide_amt))-negatives-1
+                return int(np.floor((self.data_amount-negatives)/((self.batch_size-1)*self.slide_amt+self.frames_per_sample)))
             else:
                 return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size/2)) - negatives
 
@@ -101,31 +102,29 @@ class DataGenerator(keras.utils.Sequence):
             #Starting index for batch samples
             index = batch_ind
             #Preload frames for the batch to reduce disk time
-            start = index+self.skipped_frames+self.offset
+            if not self.window:
+                start = (index*self.frames_per_sample*self.batch_size)+self.skipped_frames+self.offset
+            else:
+                start = (self.batch_size-1)*self.slide_amt*index+self.frames_per_sample*index+self.skipped_frames+self.offset
             end = start + self.frames_per_sample*self.batch_size
             preload_labels = f["/labels"][start:end]
             uniques = np.unique(preload_labels,return_counts=True)
-            if uniques[0][0]<0:
-                end+=uniques[1][0]+1
+            if -5 in uniques[0]:
+                negatives = uniques[1][0]
+                end += negatives+20
                 preload_labels = f["/labels"][start:end]
             preload = f["/frames/raw"][start:end]
-        skipped_this_batch = 0
+        
         buffer_index = 0
         while i < self.batch_size:
             #Loop forward to add to the frame sequence
             cur_amount = 0
             while cur_amount < self.frames_per_sample:
                 #Get index in preload array
-                #buffer_index = (i*self.frames_per_sample)+cur_amount+skipped_this_batch
                 label = preload_labels[buffer_index]
+                #If the label isn't invalid (-5)
                 if label >= 0:
-                    '''#If we have skipped frames this batch then the preload will run out and we will have to read from disk
-                    #Only reads the same amount as the number of skipped frames.
-                    if buffer_index >= len(preload):
-                        self.refill_buffer=True
-                        chunk_data[i][cur_amount]=f["/frames/raw"][index+self.offset]
-                    #Otherwise just take from the preload array.
-                    else:'''
+                    #Add data to batch data, label to batch labels
                     chunk_data[i][cur_amount]=preload[buffer_index]
                     if self.use_crf:
                         chunk_labels[i+cur_amount]=label
@@ -135,10 +134,10 @@ class DataGenerator(keras.utils.Sequence):
                     cur_amount+=1
                 else:
                     self.skipped_frames+=1
-                    #skipped_this_batch+=1
                     index+=1
                 buffer_index+=1
             i+=1
+            #Sliding window, reset index to first frame + slide_amt of last sample
             if self.window:
                 batch_ind += self.slide_amt
                 index = batch_ind
