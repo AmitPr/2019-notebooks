@@ -45,7 +45,8 @@ class DataGenerator(keras.utils.Sequence):
             if uniques[0][0]<0:
                 negatives+=uniques[1][0]
             if self.window:
-                return int(np.floor((self.data_amount-negatives)/((self.batch_size-1)*self.slide_amt+self.frames_per_sample)))
+                return int(np.floor(((self.data_amount-negatives-self.frames_per_sample+1)/self.batch_size*self.slide_amt)-1))
+                #int(np.floor((self.data_amount-negatives)/((self.batch_size-1)*self.slide_amt+self.frames_per_sample)))
             else:
                 return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size/2)) - negatives
 
@@ -54,7 +55,8 @@ class DataGenerator(keras.utils.Sequence):
             index*=self.batch_size*self.frames_per_sample
             index+=self.skipped_frames
         else:
-            index+=self.batch_size
+            index*=self.batch_size*self.slide_amt
+            index+=self.skipped_frames
         #Create a batch
         with h5py.File(self.file_path,'r') as f:
             if not self.frames_per_sample == 1:
@@ -105,7 +107,7 @@ class DataGenerator(keras.utils.Sequence):
             if not self.window:
                 start = (index*self.frames_per_sample*self.batch_size)+self.skipped_frames+self.offset
             else:
-                start = (self.batch_size-1)*self.slide_amt*index+self.frames_per_sample*index+self.skipped_frames+self.offset
+                start = index + self.offset
             end = start + self.frames_per_sample*self.batch_size
             preload_labels = f["/labels"][start:end]
             uniques = np.unique(preload_labels,return_counts=True)
