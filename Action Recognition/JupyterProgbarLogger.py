@@ -25,7 +25,8 @@ class JupyterProgbarLogger(Callback):
 
     def __init__(self, count_mode='samples',
                  stateful_metrics=None,
-                 notebook=True):
+                 notebook=True,
+                 measure_gpu=True):
         super(JupyterProgbarLogger,self).__init__()
         if notebook:
             from tqdm import tqdm_notebook as tqdm
@@ -38,7 +39,7 @@ class JupyterProgbarLogger(Callback):
         self.cpu_usage = []
         self.gpu_usage = []
         self.nvidia_smi= self._find_nvidia_smi()
-        self.has_gpu = True
+        self.has_gpu = True and measure_gpu
         self.subproc = None
         self.last_time = time.time()
         if count_mode == 'samples':
@@ -91,9 +92,9 @@ class JupyterProgbarLogger(Callback):
         # Skip progbar update for the last batch;
         # will be handled by on_epoch_end.
         if self.verbose and self.seen < self.target:
-            self.progbar.set_postfix(self.log_values)
+            self.progbar.set_postfix(self.log_values,refresh=False)
             if time.time()-self.last_time>=1:
-                self.progbar.set_description(self._get_desc_str())
+                self.progbar.set_description(self._get_desc_str(),refresh=False)
                 self.last_time=time.time()
             self.progbar.update(self.seen)
 
