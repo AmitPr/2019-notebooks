@@ -25,6 +25,7 @@ from datetime import datetime
 from shutil import copy
 
 import h5py
+import multiprocessing as mp
 
 @click.group()
 def cli():
@@ -72,6 +73,8 @@ def train_model(infile,
     ###FIX NUMPY LOAD FOR DICTIONARIES
     np_load_old = np.load
     np.load = lambda *a,**k: np_load_old(*a, allow_pickle=True, **k)
+    mp.set_start_method("spawn",force=True)
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
     ###Tensorflow session
     #config = tf.compat.v1.ConfigProto()
     #config.gpu_options.allow_growth = True
@@ -172,6 +175,8 @@ def continue_model(infile,
     ###FIX NUMPY LOAD FOR DICTIONARIES
     np_load_old = np.load
     np.load = lambda *a,**k: np_load_old(*a, allow_pickle=True, **k)
+    mp.set_start_method("spawn",force=True)
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
     ###Tensorflow session
     #config = tf.compat.v1.ConfigProto()
     #config.gpu_options.allow_growth = True
@@ -181,22 +186,30 @@ def continue_model(infile,
     if not os.path.exists(outdir):
         os.makedirs(outdir)
     model = keras.models.load_model(initial)
-    depth = model.layers[0].output_shape[0][1]
+    if len(model.layers[0].output_shape[0])==4:
+        depth = 1
+    else:
+        depth = model.layers[0].output_shape[0][1]
+    multiple_inputs=False
+    if len(model._input_layers) > 1:
+        multiple_inputs=True
     #Initialize generators
     data_gen = DataGenerator(infile,
                              data_amount=data_amount,
                              batch_size=batch_size,
                              frames_per_sample=depth,
                              offset=data_offset,
-                             sliding_window=slide)
+                             sliding_window=slide,
+                             labels_structured=multiple_inputs)
     validation_gen = DataGenerator(infile,
                                    data_amount=validation_amount,
                                    batch_size=batch_size,
                                    frames_per_sample=depth,
                                    offset=validation_offset,
-                                   sliding_window=slide)
-    os.remove(initial)
-    callbacks = [keras.callbacks.ModelCheckpoint(filepath= (outdir+'model_progress_{epoch:02d}.h5'),save_best_only=True),
+                                   sliding_window=slide,
+                                   labels_structured=multiple_inputs)
+    #os.remove(initial)
+    callbacks = [keras.callbacks.ModelCheckpoint(filepath= (outdir+'model_progress_{epoch:02d}.h5')),
                  Logger.JupyterProgbarLogger(count_mode='steps',notebook=False)]
     history = model.fit_generator(generator=data_gen,
                     validation_data=validation_gen,

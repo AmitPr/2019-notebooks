@@ -12,8 +12,10 @@ class DataGenerator(keras.utils.Sequence):
                  data_amount=300000,
                  batch_size=32,
                  offset=0,
-                 use_crf=False,
-                 sliding_window=0):
+                 labels_structured=False,
+                 sliding_window=0,
+                 label_range=(0,54),
+                 standardize=False):
         
         self.file_path=file_path
         #Assert that data_amount is <= available data
@@ -23,13 +25,16 @@ class DataGenerator(keras.utils.Sequence):
                 print("More data than available")
             else:
                 self.data_amount=data_amount
+            f.close()
         #Instance Variables
         self.shape=shape
         self.batch_size = batch_size
         self.frames_per_sample = frames_per_sample
         self.offset=offset
         self.skipped_frames=0
-        self.use_crf = use_crf
+        self.labels_structured = labels_structured
+        self.standardize=standardize
+        self.label_range=label_range
         #Sliding Window setup
         if sliding_window == 0:
             self.window=False
@@ -42,6 +47,7 @@ class DataGenerator(keras.utils.Sequence):
         with h5py.File(self.file_path,'r') as f:
             negatives = 0
             uniques = np.unique(f["/labels"][0:self.data_amount],return_counts=True)
+            f.close()
             if uniques[0][0]<0:
                 negatives+=uniques[1][0]
             if self.window:
@@ -58,47 +64,16 @@ class DataGenerator(keras.utils.Sequence):
             index*=self.batch_size*self.slide_amt
             index+=self.skipped_frames
         #Create a batch
-        with h5py.File(self.file_path,'r') as f:
-            if not self.frames_per_sample == 1:
-                #Generate batch_size long clips of frames to input.
-                return self.generate_chunk(index)
-            else:
-                #For when you only want 1 frame per sample in the batch (e.g. Conv2D)
-                #Pick a random set of batch_size frames for the whole batch
-                chunk_data=np.zeros((self.batch_size,)+self.shape)
-                chunk_labels=np.zeros(self.batch_size)
-                with h5py.File(self.file_path,'r') as f:
-                    i=0
-                    #Starting index for batch samples
-                    #Preload frames for the batch to reduce disk time
-                    preload = f["/frames/raw"][index+self.skipped_frames+self.offset:index+self.batch_size+self.skipped_frames+self.offset]
-                    while i < self.batch_size:
-                        label = f["/labels"][index+self.offset]
-                        if label >= 0:
-                            #Get index in preload array
-                            buffer_index = i+self.skipped_frames
-                            #If we have skipped frames this batch then the preload will run out and we will have to read from disk
-                            #Only reads the same amount as the number of skipped frames.
-                            if buffer_index >= len(preload):
-                                chunk_data[i]=f["/frames/raw"][index+self.offset]
-                            #Otherwise just take from the preload array.
-                            else:
-                                chunk_data[i]=preload[buffer_index]
-                            chunk_labels[i]=label
-                            index+=1
-                        else:
-                            self.skipped_frames+=1
-                            index+=1
-                        i+=1
-                    return chunk_data[...,None],chunk_labels
-
+        return self.generate_chunk(index)
 
     def generate_chunk(self,batch_ind):
-        chunk_data=np.zeros((self.batch_size,self.frames_per_sample,)+self.shape)
-        if self.use_crf:
-            chunk_labels=np.zeros(self.batch_size*self.frames_per_sample)
+        if self.frames_per_sample > 1:
+            chunk_data=np.zeros((self.batch_size,self.frames_per_sample,)+self.shape)
         else:
-            chunk_labels=np.zeros(self.batch_size)
+            chunk_data=np.zeros((self.batch_size,)+self.shape)
+        if self.labels_structured:
+            aux_labels=np.zeros((self.batch_size,self.frames_per_sample-1))
+        chunk_labels=np.zeros(self.batch_size)
         with h5py.File(self.file_path,'r') as f:
             i=0
             #Starting index for batch samples
@@ -111,11 +86,18 @@ class DataGenerator(keras.utils.Sequence):
             end = start + self.frames_per_sample*self.batch_size
             preload_labels = f["/labels"][start:end]
             uniques = np.unique(preload_labels,return_counts=True)
+            #to_remove = np.setxor1d(uniques[0],np.arange(self.label_range[0],self.label_range[1]))
+            #for x in to_remove:
+            #    if x in uniques[0]:
+            #        amount_to_remove = uniques[1][np.where(unique==x)[0]]
+            #        end+=amount_to_remove
+            #preload_labels=f["/labels"][start:end]
             if -5 in uniques[0]:
                 negatives = uniques[1][0]
                 end += negatives+20
                 preload_labels = f["/labels"][start:end]
-            preload = f["/frames/raw"][start:end]
+            preload = f["/frames/raw"][start:end].astype('float32')
+            f.close()
         
         buffer_index = 0
         while i < self.batch_size:
@@ -127,11 +109,18 @@ class DataGenerator(keras.utils.Sequence):
                 #If the label isn't invalid (-5)
                 if label >= 0:
                     #Add data to batch data, label to batch labels
-                    chunk_data[i][cur_amount]=preload[buffer_index]
-                    if self.use_crf:
-                        chunk_labels[i+cur_amount]=label
+                    frame = preload[buffer_index]
+                    if self.standardize:
+                        #Standardize Data
+                        frame-=np.mean(frame)
+                        frame/=np.std(frame)
+                    if self.frames_per_sample > 1:
+                        chunk_data[i][cur_amount]=frame
                     else:
-                        chunk_labels[i]=label
+                        chunk_data[cur_amount]=frame
+                    if self.labels_structured and cur_amount < self.frames_per_sample-1:
+                        aux_labels[i][cur_amount]=label
+                    chunk_labels[i]=label
                     index+=1
                     cur_amount+=1
                 else:
@@ -143,6 +132,8 @@ class DataGenerator(keras.utils.Sequence):
             if self.window:
                 batch_ind += self.slide_amt
                 index = batch_ind
+        if self.labels_structured:
+            return [chunk_data[...,None],aux_labels[...,None]],chunk_labels
         return chunk_data[...,None],chunk_labels
     
     def on_epoch_end(self):
