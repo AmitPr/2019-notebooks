@@ -67,7 +67,7 @@ class JupyterProgbarLogger(Callback):
                 target = self.params['steps']
             else:
                 target = self.params['samples']
-            self.target = target
+            self.target = target+1
             self.progbar = self.tqdm(total=self.target,desc = self._get_desc_str())
         self.seen = 0
         self.gpu_usage = []
@@ -108,7 +108,20 @@ class JupyterProgbarLogger(Callback):
             self.progbar.set_description(self._get_desc_str())
             self.progbar.set_postfix(self.log_values)
         self.progbar.close()
-        
+    
+    def on_predict_begin(self,logs=None):
+        self.on_train_begin(logs)
+        self.on_epoch_begin(0,logs)
+    
+    def on_predict_batch_begin(self,batch,logs=None):
+        self.on_batch_begin(batch,logs=None)
+    
+    def on_predict_batch_end(self,batch,logs=None):
+        self.on_batch_end(batch,logs)
+    
+    def on_predict_end(self,logs=None):
+        self.on_epoch_end(0,logs)
+    
     def update_vals(self,values,step_amt):
         current=self._seen_so_far+step_amt
         for k, v in values:
