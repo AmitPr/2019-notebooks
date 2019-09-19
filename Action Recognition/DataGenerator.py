@@ -52,7 +52,6 @@ class DataGenerator(keras.utils.Sequence):
                 negatives+=uniques[1][0]
             if self.window:
                 return int(np.floor(((self.data_amount-negatives-self.frames_per_sample+1)/self.batch_size*self.slide_amt)-1))
-                #int(np.floor((self.data_amount-negatives)/((self.batch_size-1)*self.slide_amt+self.frames_per_sample)))
             else:
                 return int(np.floor((self.data_amount/self.frames_per_sample)/self.batch_size/2)) - negatives
 
@@ -86,14 +85,10 @@ class DataGenerator(keras.utils.Sequence):
             end = start + self.frames_per_sample*self.batch_size
             preload_labels = f["/labels"][start:end]
             uniques = np.unique(preload_labels,return_counts=True)
-            #to_remove = np.setxor1d(uniques[0],np.arange(self.label_range[0],self.label_range[1]))
-            #for x in to_remove:
-            #    if x in uniques[0]:
-            #        amount_to_remove = uniques[1][np.where(unique==x)[0]]
-            #        end+=amount_to_remove
-            #preload_labels=f["/labels"][start:end]
+            #-5 defined as invalid label in dataset
             if -5 in uniques[0]:
                 negatives = uniques[1][0]
+                #padding input in case many invalid frames 
                 end += negatives+20
                 preload_labels = f["/labels"][start:end]
             preload = f["/frames/raw"][start:end].astype('float32')
